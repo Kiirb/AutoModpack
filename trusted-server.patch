@@ -1,0 +1,170 @@
+From 231447fd951b165622ba6b5d3085d9d3d9e68453 Mon Sep 17 00:00:00 2001
+From: kirb <kirb@localhost>
+Date: Mon, 16 Nov 2026 23:27:27 +0100
+Subject: [PATCH] trusted-server: skip unverified JAR warning, self-update from
+ our fork
+
+Private server running our own self-compiled mods.
+- Never show the 'MODPACK UPDATE / unverified JARs' DangerScreen or abort
+  preload updates for JARs without a Modrinth/CurseForge match.
+- On clients, the self-updater ignores Modrinth and only installs the
+  patched build listed in trusted-manifest.json on the Kiirb/AutoModpack
+  GitHub releases.
+---
+ .../automodpack_loader_core/SelfUpdater.java  |   6 +
+ .../TrustedUpdater.java                       | 106 ++++++++++++++++++
+ .../client/ModpackUpdater.java                |   8 +-
+ 3 files changed, 119 insertions(+), 1 deletion(-)
+ create mode 100644 loader/core/src/main/java/pl/skidam/automodpack_loader_core/TrustedUpdater.java
+
+diff --git a/loader/core/src/main/java/pl/skidam/automodpack_loader_core/SelfUpdater.java b/loader/core/src/main/java/pl/skidam/automodpack_loader_core/SelfUpdater.java
+index a4da3732..fc1c4cf4 100644
+--- a/loader/core/src/main/java/pl/skidam/automodpack_loader_core/SelfUpdater.java
++++ b/loader/core/src/main/java/pl/skidam/automodpack_loader_core/SelfUpdater.java
+@@ -35,6 +35,12 @@ public class SelfUpdater {
+             return false;
+         }
+ 
++        // [trusted-server patch] Clients only ever update to our patched build,
++        // never to the official Modrinth jar (ignores selfUpdater/syncAutoModpackVersion).
++        if (LOADER_MANAGER.getEnvironmentType() == LoaderManagerService.EnvironmentType.CLIENT) {
++            return TrustedUpdater.update();
++        }
++
+         boolean gettingServerVersion = serverModpackContent != null && serverModpackContent.automodpackVersion != null && !serverModpackContent.automodpackVersion.isBlank();
+ 
+         if (!gettingServerVersion && LOADER_MANAGER.getEnvironmentType() == LoaderManagerService.EnvironmentType.CLIENT && !clientConfig.selfUpdater) {
+diff --git a/loader/core/src/main/java/pl/skidam/automodpack_loader_core/TrustedUpdater.java b/loader/core/src/main/java/pl/skidam/automodpack_loader_core/TrustedUpdater.java
+new file mode 100644
+index 00000000..e061137a
+--- /dev/null
++++ b/loader/core/src/main/java/pl/skidam/automodpack_loader_core/TrustedUpdater.java
+@@ -0,0 +1,106 @@
++package pl.skidam.automodpack_loader_core;
++
++import com.google.gson.Gson;
++import pl.skidam.automodpack_core.utils.CustomFileUtils;
++import pl.skidam.automodpack_core.utils.HttpClientPool;
++import pl.skidam.automodpack_core.utils.SemanticVersion;
++import pl.skidam.automodpack_loader_core.platforms.ModrinthAPI;
++
++import java.net.http.HttpResponse;
++import java.nio.charset.StandardCharsets;
++import java.util.List;
++import java.util.Map;
++
++import static pl.skidam.automodpack_core.GlobalVariables.*;
++
++/**
++ * [trusted-server patch] Self-updater that only ever installs the patched
++ * "trusted-server" AutoModpack build published on our own GitHub fork,
++ * never the official jar from Modrinth.
++ *
++ * Reads {@link #MANIFEST_URL}, picks the entry for the running Minecraft
++ * version + loader, and installs it if its SHA1 differs from the running jar.
++ */
++public final class TrustedUpdater {
++
++    public static final String MANIFEST_URL =
++            "https://github.com/Kiirb/AutoModpack/releases/latest/download/trusted-manifest.json";
++
++    private TrustedUpdater() {}
++
++    static final class Manifest {
++        List<Entry> files;
++    }
++
++    static final class Entry {
++        String version;
++        String mcVersion;
++        String loader;
++        String fileName;
++        String url;
++        String sha1;
++        long size;
++    }
++
++    /** @return true if an update was installed and the game is restarting. */
++    public static boolean update() {
++        Manifest manifest;
++        try {
++            HttpResponse<byte[]> response = HttpClientPool.request(MANIFEST_URL,
++                    Map.of("User-Agent", "automodpack-trusted/" + AM_VERSION), null, true);
++            if (response.statusCode() != 200) {
++                LOGGER.warn("[trusted-server patch] Update manifest returned HTTP {}", response.statusCode());
++                return false;
++            }
++            manifest = new Gson().fromJson(new String(response.body(), StandardCharsets.UTF_8), Manifest.class);
++        } catch (Exception e) {
++            LOGGER.warn("[trusted-server patch] Couldn't fetch update manifest: {}", e.toString());
++            return false;
++        }
++
++        if (manifest == null || manifest.files == null) {
++            LOGGER.warn("[trusted-server patch] Update manifest is empty or invalid");
++            return false;
++        }
++
++        Entry entry = manifest.files.stream()
++                .filter(e -> e != null && MC_VERSION != null && MC_VERSION.equals(e.mcVersion)
++                        && LOADER != null && LOADER.equalsIgnoreCase(e.loader))
++                .findFirst().orElse(null);
++
++        if (entry == null) {
++            LOGGER.info("[trusted-server patch] No patched build published for {} {}", LOADER, MC_VERSION);
++            return false;
++        }
++        if (entry.url == null || !entry.url.startsWith("https://") || entry.sha1 == null
++                || entry.fileName == null || entry.version == null || entry.size <= 0) {
++            LOGGER.warn("[trusted-server patch] Ignoring incomplete manifest entry for {} {}", LOADER, MC_VERSION);
++            return false;
++        }
++
++        String currentHash = CustomFileUtils.getHash(THIS_MOD_JAR);
++        if (entry.sha1.equalsIgnoreCase(currentHash)) {
++            LOGGER.info("[trusted-server patch] AutoModpack is up to date ({})", entry.fileName);
++            return false;
++        }
++
++        try {
++            SemanticVersion current = SemanticVersion.parse(AM_VERSION);
++            SemanticVersion remote = SemanticVersion.parse(entry.version);
++            if (remote.compareTo(current) < 0) {
++                LOGGER.info("[trusted-server patch] Installed AutoModpack {} is newer than patched build {}, keeping it",
++                        AM_VERSION, entry.version);
++                return false;
++            }
++            if (!SelfUpdater.validUpdate(remote)) return false;
++        } catch (IllegalArgumentException e) {
++            LOGGER.warn("[trusted-server patch] Invalid version in manifest: {}", entry.version);
++            return false;
++        }
++
++        LOGGER.info("[trusted-server patch] Installing patched AutoModpack {} ({})", entry.version, entry.fileName);
++        SelfUpdater.installModVersion(new ModrinthAPI(null, MANIFEST_URL, entry.url, entry.version,
++                entry.fileName, entry.size, "release", entry.sha1.toLowerCase()));
++        return true;
++    }
++}
+diff --git a/loader/core/src/main/java/pl/skidam/automodpack_loader_core/client/ModpackUpdater.java b/loader/core/src/main/java/pl/skidam/automodpack_loader_core/client/ModpackUpdater.java
+index 647b811d..45880ba0 100644
+--- a/loader/core/src/main/java/pl/skidam/automodpack_loader_core/client/ModpackUpdater.java
++++ b/loader/core/src/main/java/pl/skidam/automodpack_loader_core/client/ModpackUpdater.java
+@@ -131,7 +131,13 @@ public class ModpackUpdater {
+     }
+ 
+     private boolean hasUnverifiedJars() {
+-        return !unverifiedJarFiles.isEmpty();
++        // [trusted-server patch] Private server with our own self-compiled mods:
++        // never treat JARs without a Modrinth/CurseForge match as a reason to show
++        // the "MODPACK UPDATE / unverified JARs" warning screen or abort preload updates.
++        if (!unverifiedJarFiles.isEmpty()) {
++            LOGGER.info("[trusted-server patch] Skipping unverified JAR warning for {} file(s)", unverifiedJarFiles.size());
++        }
++        return false;
+     }
+ 
+     private void abortPreloadUpdate() {
+-- 
+2.56.1
+

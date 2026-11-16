@@ -1,0 +1,58 @@
+name: Trusted AutoModpack build
+
+on:
+  schedule:
+    - cron: '17 4 * * *'   # daily: check upstream for a new stable release
+  workflow_dispatch:
+    inputs:
+      force:
+        description: Rebuild even if the latest release already has this upstream tag + patch
+        type: boolean
+        default: false
+      tag:
+        description: Upstream tag to build (empty = newest stable)
+        type: string
+        default: ''
+  push:
+    branches: [automation]
+    paths:
+      - trusted-server.patch
+      - ci/**
+      - .github/workflows/trusted-update.yml
+
+permissions:
+  contents: write   # create releases
+  actions: write    # keep the schedule from being auto-disabled
+
+concurrency:
+  group: trusted-update
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    env:
+      MAJOR: '4'                     # follow upstream v4.x.y stable releases only
+      TARGETS: '1.21.1-neoforge'     # space-separated, e.g. '1.21.1-neoforge 1.21.1-fabric'
+      GH_REPO: ${{ github.repository }}
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: 25
+
+      - uses: gradle/actions/setup-gradle@v5
+
+      - name: Build and publish
+        run: bash ci/build.sh
+        env:
+          FORCE: ${{ inputs.force || 'false' }}
+          TAG: ${{ inputs.tag }}
+
+      # GitHub disables scheduled workflows after 60 days without repo activity.
+      - name: Keep schedule alive
+        if: always()
+        run: gh api -X PUT "repos/$GH_REPO/actions/workflows/trusted-update.yml/enable"
