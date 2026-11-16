@@ -131,7 +131,13 @@ public class ModpackUpdater {
     }
 
     private boolean hasUnverifiedJars() {
-        return !unverifiedJarFiles.isEmpty();
+        // [trusted-server patch] Private server with our own self-compiled mods:
+        // never treat JARs without a Modrinth/CurseForge match as a reason to show
+        // the "MODPACK UPDATE / unverified JARs" warning screen or abort preload updates.
+        if (!unverifiedJarFiles.isEmpty()) {
+            LOGGER.info("[trusted-server patch] Skipping unverified JAR warning for {} file(s)", unverifiedJarFiles.size());
+        }
+        return false;
     }
 
     private void abortPreloadUpdate() {

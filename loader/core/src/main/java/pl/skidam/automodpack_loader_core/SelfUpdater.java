@@ -35,6 +35,12 @@ public class SelfUpdater {
             return false;
         }
 
+        // [trusted-server patch] Clients only ever update to our patched build,
+        // never to the official Modrinth jar (ignores selfUpdater/syncAutoModpackVersion).
+        if (LOADER_MANAGER.getEnvironmentType() == LoaderManagerService.EnvironmentType.CLIENT) {
+            return TrustedUpdater.update();
+        }
+
         boolean gettingServerVersion = serverModpackContent != null && serverModpackContent.automodpackVersion != null && !serverModpackContent.automodpackVersion.isBlank();
 
         if (!gettingServerVersion && LOADER_MANAGER.getEnvironmentType() == LoaderManagerService.EnvironmentType.CLIENT && !clientConfig.selfUpdater) {
