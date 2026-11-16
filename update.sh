@@ -6,9 +6,11 @@
 #   ./update.sh local [vX.Y.Z]  rebase ./AutoModpack (branch trusted-server) onto the newest
 #                               stable v4 tag (or the given one) and build 1.21.1-neoforge.
 #                               Jar ends up in AutoModpack/merged/. Use this to work on the patch.
-#   ./update.sh publish         export the patch commit to trusted-server.patch, push it to
-#                               the fork's automation branch -> GitHub Actions builds + releases.
-#                               If the patch didn't change, just triggers a check for upstream updates.
+#   ./update.sh publish         export the patch commit to trusted-server.patch, push it to the
+#                               fork's automation branch, and trigger a check for upstream updates.
+#                               (One release per AutoModpack version: a changed patch is used from
+#                               the next upstream release on. To rebuild the current version anyway:
+#                               gh workflow run trusted-update.yml -R Kiirb/AutoModpack -f force=true)
 #   ./update.sh status          show the latest GitHub Actions runs
 set -euo pipefail
 
@@ -49,8 +51,8 @@ publish)
     if [ -n "$(git status --porcelain trusted-server.patch)" ]; then
         git add trusted-server.patch
         git commit --quiet -m "Update trusted-server.patch"
-        git push --quiet origin automation
-        echo ">> Patch changed - pushed. GitHub Actions is building a new release."
+        git push --quiet origin automation   # push also starts the workflow
+        echo ">> Patch changed - pushed. GitHub Actions is checking for a version to build."
     else
         gh workflow run "$WORKFLOW" -R "$GH_REPO"
         echo ">> Patch unchanged - triggered a check for new upstream releases."
@@ -61,5 +63,5 @@ status)
     gh run list -R "$GH_REPO" --workflow "$WORKFLOW" --limit 5
     ;;
 *)
-    sed -n '2,16p' "$0" | sed 's/^# \{0,1\}//'; exit 1 ;;
+    sed -n '2,19p' "$0" | sed 's/^# \{0,1\}//'; exit 1 ;;
 esac

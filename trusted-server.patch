@@ -1,4 +1,4 @@
-From 231447fd951b165622ba6b5d3085d9d3d9e68453 Mon Sep 17 00:00:00 2001
+From 4812b42ab8e6bc9777f59b6a30d7429751c0fd59 Mon Sep 17 00:00:00 2001
 From: kirb <kirb@localhost>
 Date: Mon, 16 Nov 2026 23:27:27 +0100
 Subject: [PATCH] trusted-server: skip unverified JAR warning, self-update from
@@ -11,10 +11,10 @@ Private server running our own self-compiled mods.
   patched build listed in trusted-manifest.json on the Kiirb/AutoModpack
   GitHub releases.
 ---
- .../automodpack_loader_core/SelfUpdater.java  |   6 +
- .../TrustedUpdater.java                       | 106 ++++++++++++++++++
+ .../automodpack_loader_core/SelfUpdater.java  |   6 ++
+ .../TrustedUpdater.java                       | 101 ++++++++++++++++++
  .../client/ModpackUpdater.java                |   8 +-
- 3 files changed, 119 insertions(+), 1 deletion(-)
+ 3 files changed, 114 insertions(+), 1 deletion(-)
  create mode 100644 loader/core/src/main/java/pl/skidam/automodpack_loader_core/TrustedUpdater.java
 
 diff --git a/loader/core/src/main/java/pl/skidam/automodpack_loader_core/SelfUpdater.java b/loader/core/src/main/java/pl/skidam/automodpack_loader_core/SelfUpdater.java
@@ -36,14 +36,13 @@ index a4da3732..fc1c4cf4 100644
          if (!gettingServerVersion && LOADER_MANAGER.getEnvironmentType() == LoaderManagerService.EnvironmentType.CLIENT && !clientConfig.selfUpdater) {
 diff --git a/loader/core/src/main/java/pl/skidam/automodpack_loader_core/TrustedUpdater.java b/loader/core/src/main/java/pl/skidam/automodpack_loader_core/TrustedUpdater.java
 new file mode 100644
-index 00000000..e061137a
+index 00000000..b7e33700
 --- /dev/null
 +++ b/loader/core/src/main/java/pl/skidam/automodpack_loader_core/TrustedUpdater.java
-@@ -0,0 +1,106 @@
+@@ -0,0 +1,101 @@
 +package pl.skidam.automodpack_loader_core;
 +
 +import com.google.gson.Gson;
-+import pl.skidam.automodpack_core.utils.CustomFileUtils;
 +import pl.skidam.automodpack_core.utils.HttpClientPool;
 +import pl.skidam.automodpack_core.utils.SemanticVersion;
 +import pl.skidam.automodpack_loader_core.platforms.ModrinthAPI;
@@ -61,7 +60,7 @@ index 00000000..e061137a
 + * never the official jar from Modrinth.
 + *
 + * Reads {@link #MANIFEST_URL}, picks the entry for the running Minecraft
-+ * version + loader, and installs it if its SHA1 differs from the running jar.
++ * version + loader, and installs it if its version is newer than the running one.
 + */
 +public final class TrustedUpdater {
 +
@@ -120,17 +119,13 @@ index 00000000..e061137a
 +            return false;
 +        }
 +
-+        String currentHash = CustomFileUtils.getHash(THIS_MOD_JAR);
-+        if (entry.sha1.equalsIgnoreCase(currentHash)) {
-+            LOGGER.info("[trusted-server patch] AutoModpack is up to date ({})", entry.fileName);
-+            return false;
-+        }
-+
++        // Like the official updater: only update to a newer version. The jar keeps the
++        // official file name, so installing the same version would overwrite itself.
 +        try {
 +            SemanticVersion current = SemanticVersion.parse(AM_VERSION);
 +            SemanticVersion remote = SemanticVersion.parse(entry.version);
-+            if (remote.compareTo(current) < 0) {
-+                LOGGER.info("[trusted-server patch] Installed AutoModpack {} is newer than patched build {}, keeping it",
++            if (remote.compareTo(current) <= 0) {
++                LOGGER.info("[trusted-server patch] AutoModpack is up to date ({}, latest patched build {})",
 +                        AM_VERSION, entry.version);
 +                return false;
 +            }

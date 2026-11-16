@@ -9,7 +9,7 @@ This is the `automation` branch of https://github.com/Kiirb/AutoModpack.
 - On clients, the self-updater never downloads the official Modrinth jar.
   On every launch it reads
   `https://github.com/Kiirb/AutoModpack/releases/latest/download/trusted-manifest.json`
-  and installs the patched jar listed there if its SHA1 differs from the running jar
+  and installs the patched jar listed there if its version is newer than the running one
   (regardless of `selfUpdater` / `syncAutoModpackVersion` in the client config).
 - Server behaviour is unchanged.
 
@@ -22,9 +22,14 @@ The whole patch is `trusted-server.patch` (one commit). Patched files, all under
 ## Automatic updates (GitHub Actions)
 `.github/workflows/trusted-update.yml` runs daily and:
 1. finds the newest stable upstream `v4.x.y` tag of Skidamek/AutoModpack,
-2. skips if the latest release already is that tag + the current patch,
+2. skips if release `vX.Y.Z-trusted` for that version already exists,
 3. otherwise clones upstream, applies `trusted-server.patch`, builds `1.21.1-neoforge`,
-4. publishes release `vX.Y.Z-trusted.N` with the jar, `trusted-manifest.json` and the patch.
+4. publishes release `vX.Y.Z-trusted` with the jar (same file name as the official one,
+   e.g. `automodpack-mc1.21.1-neoforge-4.0.7.jar`), `trusted-manifest.json` and the patch.
+
+One release per AutoModpack version, like upstream. A changed patch is only picked up with the
+next upstream version (clients never reinstall a version they already have). To rebuild the
+current version anyway (e.g. for new installs): run the workflow with `force` checked.
 
 Patched clients pick it up on their next launch. It also runs when the patch is pushed,
 and can be started by hand (Actions tab, or `./update.sh publish`).
